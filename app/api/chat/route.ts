@@ -7,6 +7,7 @@ import { corsOptions, corsResponse, withWidgetAuth } from "@/app/api/widget/util
 import { db } from "@/db/client";
 import { conversations } from "@/db/schema";
 import { createUserMessage, respondWithAI } from "@/lib/ai/chat";
+import { cacheTools } from "@/lib/data/cachedTools";
 import {
   CHAT_CONVERSATION_SUBJECT,
   generateConversationSubject,
@@ -15,6 +16,7 @@ import {
 import { publicConversationChannelId } from "@/lib/realtime/channels";
 import { publishToRealtime } from "@/lib/realtime/publish";
 import { validateAttachments } from "@/lib/shared/attachmentValidation";
+import { captureExceptionAndLog } from "@/lib/shared/sentry";
 import { createClient } from "@/lib/supabase/server";
 import { WidgetSessionPayload } from "@/lib/widgetSession";
 import { ToolRequestBody } from "@/packages/client/dist";
@@ -29,6 +31,7 @@ interface ChatRequestBody {
   guideEnabled: boolean;
   isToolResult?: boolean;
   tools?: Record<string, ToolRequestBody>;
+  customerSpecificTools?: boolean;
 }
 
 const getConversation = async (conversationSlug: string, session: WidgetSessionPayload) => {
@@ -53,7 +56,8 @@ const getConversation = async (conversationSlug: string, session: WidgetSessionP
 export const OPTIONS = () => corsOptions("POST");
 
 export const POST = withWidgetAuth(async ({ request }, { session, mailbox }) => {
-  const { message, conversationSlug, readPageTool, guideEnabled, tools }: ChatRequestBody = await request.json();
+  const { message, conversationSlug, readPageTool, guideEnabled, tools, customerSpecificTools }: ChatRequestBody =
+    await request.json();
 
   Sentry.setTag("conversation_slug", conversationSlug);
 
@@ -102,6 +106,21 @@ export const POST = withWidgetAuth(async ({ request }, { session, mailbox }) => 
   let isHelperUser = false;
   if ((await supabase.auth.getUser()).data.user?.id) {
     isHelperUser = true;
+  }
+
+  // Cache tools if provided
+  if (tools && Object.keys(tools).length > 0) {
+    try {
+      await cacheTools({
+        tools,
+        customerSpecificTools: customerSpecificTools ?? false,
+        session,
+      });
+    } catch (error) {
+      captureExceptionAndLog(error, {
+        extra: { tools, customerSpecificTools, session },
+      });
+    }
   }
 
   return await respondWithAI({

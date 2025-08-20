@@ -4,6 +4,7 @@ import { Check, RefreshCw, Trash } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConfirmationDialog } from "@/components/confirmationDialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -13,8 +14,21 @@ import { RouterOutputs } from "@/trpc";
 import { api } from "@/trpc/react";
 import ToolListItem from "./toolListItem";
 
-const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["list"][number] }) => {
+const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["listWithCached"][number] }) => {
   const utils = api.useUtils();
+  
+  // Helper function to get badge info based on API type
+  const getBadgeInfo = () => {
+    if (apiData.id === -1) {
+      return { label: "Global Cached", variant: "bright" as const };
+    } else if (apiData.id === -2) {
+      return { label: "Customer Cached", variant: "gray" as const };
+    } else {
+      return { label: "Database API", variant: "default" as const };
+    }
+  };
+
+  const badgeInfo = getBadgeInfo();
   const [isRefreshed, setIsRefreshed] = useState(false);
   const [isSchemaPopoverOpen, setIsSchemaPopoverOpen] = useState(false);
   const [schema, setSchema] = useState("");
@@ -23,7 +37,7 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
     onSuccess: () => {
       setIsRefreshed(true);
       setTimeout(() => setIsRefreshed(false), 3000);
-      utils.mailbox.tools.list.invalidate();
+      utils.mailbox.tools.listWithCached.invalidate();
       setIsSchemaPopoverOpen(false);
       setSchema("");
     },
@@ -34,7 +48,7 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
 
   const { mutate: deleteApi, isPending: isDeleting } = api.mailbox.tools.deleteApi.useMutation({
     onSuccess: () => {
-      utils.mailbox.tools.list.invalidate();
+      utils.mailbox.tools.listWithCached.invalidate();
     },
     onError: (error) => {
       toast.error("Error deleting API", { description: error.message });
@@ -61,11 +75,15 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>{apiData.name}</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>{apiData.name}</CardTitle>
+              <Badge variant={badgeInfo.variant}>{badgeInfo.label}</Badge>
+            </div>
             <div className="text-sm text-muted-foreground">{apiData.baseUrl ?? "OpenAPI schema"}</div>
           </div>
           <div className="flex gap-2">
-            {!apiData.baseUrl ? (
+            {/* Only show refresh/delete actions for database APIs, not cached tools */}
+            {apiData.id > 0 && !apiData.baseUrl ? (
               <Popover open={isSchemaPopoverOpen} onOpenChange={setIsSchemaPopoverOpen}>
                 <PopoverTrigger asChild>{refreshButton({})}</PopoverTrigger>
                 <PopoverContent className="min-w-[400px]">
@@ -98,7 +116,7 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
                   </div>
                 </PopoverContent>
               </Popover>
-            ) : (
+            ) : apiData.id > 0 ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -112,8 +130,9 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
                 )}
                 {isRefreshed ? "Refreshed" : "Refresh"}
               </Button>
-            )}
-            <ConfirmationDialog
+            ) : null}
+            {apiData.id > 0 && (
+              <ConfirmationDialog
               message="Are you sure you want to delete this API?"
               onConfirm={() => {
                 deleteApi({ apiId: apiData.id });
@@ -124,6 +143,7 @@ const ApiCard = ({ api: apiData }: { api: RouterOutputs["mailbox"]["tools"]["lis
                 <Trash className="h-4 w-4" />
               </Button>
             </ConfirmationDialog>
+            )}
           </div>
         </div>
       </CardHeader>

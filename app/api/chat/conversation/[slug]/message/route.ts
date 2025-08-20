@@ -6,7 +6,9 @@ import { db } from "@/db/client";
 import { conversations } from "@/db/schema";
 import { triggerEvent } from "@/jobs/trigger";
 import { createUserMessage } from "@/lib/ai/chat";
+import { cacheTools } from "@/lib/data/cachedTools";
 import { validateAttachments } from "@/lib/shared/attachmentValidation";
+import { captureExceptionAndLog } from "@/lib/shared/sentry";
 
 export const maxDuration = 60;
 
@@ -14,7 +16,12 @@ export const OPTIONS = () => corsOptions("POST");
 
 export const POST = withWidgetAuth<{ slug: string }>(async ({ request, context: { params } }, { session }) => {
   const { slug } = await params;
-  const { content, attachments = [], tools } = createMessageBodySchema.parse(await request.json());
+  const {
+    content,
+    attachments = [],
+    tools,
+    customerSpecificTools,
+  } = createMessageBodySchema.parse(await request.json());
 
   if (!content || content.trim().length === 0) {
     return corsResponse({ error: "Content is required" }, { status: 400 });
@@ -66,6 +73,21 @@ export const POST = withWidgetAuth<{ slug: string }>(async ({ request, context: 
   }
 
   const userMessage = await createUserMessage(conversation.id, userEmail, content, attachmentData);
+
+  // Cache tools if provided
+  if (tools && Object.keys(tools).length > 0) {
+    try {
+      await cacheTools({
+        tools,
+        customerSpecificTools: customerSpecificTools ?? false,
+        session,
+      });
+    } catch (error) {
+      captureExceptionAndLog(error, {
+        extra: { tools, customerSpecificTools, session },
+      });
+    }
+  }
 
   await triggerEvent(
     "conversations/auto-response.create",

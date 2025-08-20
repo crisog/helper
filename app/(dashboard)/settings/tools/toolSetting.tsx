@@ -17,7 +17,7 @@ const ToolSetting = () => {
     isLoading: apisLoading,
     isFetching: apisFetching,
     error,
-  } = api.mailbox.tools.list.useQuery();
+  } = api.mailbox.tools.listWithCached.useQuery();
 
   useEffect(() => {
     if (error) {

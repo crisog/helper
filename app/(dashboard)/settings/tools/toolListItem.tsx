@@ -15,9 +15,25 @@ const ToolListItem = ({ tool }: { tool: ToolFormatted }) => {
   const [editingTool, setEditingTool] = useState<ToolFormatted | null>(null);
   const utils = api.useUtils();
 
+  // Helper function to get source badge info
+  const getSourceBadge = (toolSource?: string) => {
+    switch (toolSource) {
+      case "cached-global":
+        return { label: "Cached", variant: "bright" as const };
+      case "cached-customer":
+        return { label: "Customer", variant: "gray" as const };
+      case "database":
+      default:
+        return null; // No badge for database tools (default)
+    }
+  };
+
+  const sourceBadge = getSourceBadge(tool.source);
+  const isCachedTool = tool.source?.startsWith("cached");
+
   const updateToolMutation = api.mailbox.tools.update.useMutation({
     onMutate: ({ toolId, settings }) => {
-      utils.mailbox.tools.list.setData(undefined, (currentApis = []) =>
+      utils.mailbox.tools.listWithCached.setData(undefined, (currentApis = []) =>
         currentApis.map((api) => ({
           ...api,
           tools: api.tools.map((t) => (t.id === toolId ? { ...t, ...settings } : t)),
@@ -61,7 +77,10 @@ const ToolListItem = ({ tool }: { tool: ToolFormatted }) => {
       <div className="border rounded-lg p-4 my-4 grid gap-4">
         <div>
           <Label>Name</Label>
-          <div className="text-sm">{editingTool.name}</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm">{editingTool.name}</div>
+            {sourceBadge && <Badge variant={sourceBadge.variant}>{sourceBadge.label}</Badge>}
+          </div>
         </div>
         <div>
           <Label>Description</Label>
@@ -180,15 +199,21 @@ const ToolListItem = ({ tool }: { tool: ToolFormatted }) => {
     <div className="flex items-center gap-4 py-4">
       <Switch checked={tool.enabled} onCheckedChange={handleToolToggle} disabled={updateToolMutation.isPending} />
       <div
-        className="flex-1 min-w-0 text-left flex items-center cursor-pointer"
-        onClick={() => setEditingTool({ ...tool })}
+        className={`flex-1 min-w-0 text-left flex items-center ${!isCachedTool ? "cursor-pointer" : "cursor-default"}`}
+        onClick={() => !isCachedTool && setEditingTool({ ...tool })}
       >
         <div className="flex-1 min-w-0">
-          <div className="truncate text-sm">{tool.name}</div>
-          <div className="text-xs truncate text-muted-foreground">/{tool.path}</div>
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm">{tool.name}</div>
+            {sourceBadge && <Badge variant={sourceBadge.variant}>{sourceBadge.label}</Badge>}
+          </div>
+          <div className="text-xs truncate text-muted-foreground">
+            /{tool.path}
+            {isCachedTool && " • Read-only"}
+          </div>
         </div>
         <Badge variant="default">{tool.requestMethod}</Badge>
-        <Settings className="h-4 w-4 ml-4 text-muted-foreground" />
+        {!isCachedTool && <Settings className="h-4 w-4 ml-4 text-muted-foreground" />}
       </div>
     </div>
   );

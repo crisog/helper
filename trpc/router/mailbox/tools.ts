@@ -5,7 +5,8 @@ import { takeUniqueOrThrow } from "@/components/utils/arrays";
 import { assertDefined } from "@/components/utils/assert";
 import { db } from "@/db/client";
 import { toolApis, tools as toolsTable } from "@/db/schema";
-import { fetchOpenApiSpec, importToolsFromSpec } from "@/lib/data/tools";
+import { fetchOpenApiSpec, importToolsFromSpec, getAllToolsForChat } from "@/lib/data/tools";
+import { getAllCachedToolsForUI } from "@/lib/data/cachedTools";
 import { captureExceptionAndLog } from "@/lib/shared/sentry";
 import type { ToolFormatted } from "@/types/tools";
 import { mailboxProcedure } from "./procedure";
@@ -208,4 +209,135 @@ export const toolsRouter = {
         });
       }
     }),
+
+  listWithCached: mailboxProcedure.query(async ({ ctx }) => {
+    try {
+      // Get traditional API-imported tools
+      const apis = await db.query.toolApis.findMany({
+        columns: {
+          id: true,
+          name: true,
+          baseUrl: true,
+        },
+        with: {
+          tools: {
+            columns: {
+              id: true,
+              name: true,
+              description: true,
+              url: true,
+              requestMethod: true,
+              enabled: true,
+              slug: true,
+              availableInChat: true,
+              availableInAnonymousChat: true,
+              customerEmailParameter: true,
+              parameters: true,
+              toolApiId: true,
+            },
+            orderBy: [desc(toolsTable.enabled), asc(toolsTable.id)],
+          },
+        },
+      });
+
+      // Get cached tools
+      const cachedToolsData = await getAllCachedToolsForUI();
+
+      // Format API tools
+      const formattedApis = apis.map((api) => ({
+        id: api.id,
+        name: api.name,
+        baseUrl: api.baseUrl,
+        tools: api.tools.map(
+          (tool) =>
+            ({
+              ...tool,
+              path: tool.url
+                .split(/\/\/[^/]+/)
+                .pop()!
+                .replace(/^\/+|\/+$/g, ""),
+              toolApiId: api.id,
+              unused_mailboxId: ctx.mailbox.id,
+              source: "database",
+            }) satisfies ToolFormatted & { source: string },
+        ),
+      }));
+
+      // Format cached tools as a special "API" group
+      const cachedApis = [];
+      
+      // Global cached tools
+      if (cachedToolsData.globalTools.length > 0) {
+        cachedApis.push({
+          id: -1, // Special ID for cached tools
+          name: "Global Cached Tools",
+          baseUrl: null,
+          tools: cachedToolsData.globalTools.map((tool) => ({
+            id: tool.id,
+            name: tool.toolName,
+            description: tool.description || "",
+            url: tool.serverRequestUrl,
+            requestMethod: "POST" as const,
+            enabled: true,
+            slug: tool.toolName,
+            availableInChat: true,
+            availableInAnonymousChat: false,
+            customerEmailParameter: null,
+            parameters: tool.parameters ? Object.entries(tool.parameters).map(([name, param]) => ({
+              name,
+              description: param.description,
+              type: param.type,
+              in: "body" as const,
+              required: !param.optional,
+            })) : [],
+            toolApiId: -1,
+            path: tool.serverRequestUrl.split('/').pop() || tool.toolName,
+            unused_mailboxId: ctx.mailbox.id,
+            source: "cached-global",
+          })) satisfies (ToolFormatted & { source: string })[],
+        });
+      }
+
+      // Customer-specific cached tools
+      if (cachedToolsData.customerSpecificTools.length > 0) {
+        cachedApis.push({
+          id: -2, // Special ID for customer-specific cached tools
+          name: "Customer-Specific Cached Tools",
+          baseUrl: null,
+          tools: cachedToolsData.customerSpecificTools.map((tool) => ({
+            id: tool.id,
+            name: tool.toolName,
+            description: tool.description || "",
+            url: tool.serverRequestUrl,
+            requestMethod: "POST" as const,
+            enabled: true,
+            slug: tool.toolName,
+            availableInChat: true,
+            availableInAnonymousChat: false,
+            customerEmailParameter: tool.customerEmail || null,
+            parameters: tool.parameters ? Object.entries(tool.parameters).map(([name, param]) => ({
+              name,
+              description: param.description,
+              type: param.type,
+              in: "body" as const,
+              required: !param.optional,
+            })) : [],
+            toolApiId: -2,
+            path: tool.serverRequestUrl.split('/').pop() || tool.toolName,
+            unused_mailboxId: ctx.mailbox.id,
+            source: "cached-customer",
+            customerInfo: tool.customerInfo,
+          })) satisfies (ToolFormatted & { source: string; customerInfo?: any })[],
+        });
+      }
+
+      return [...formattedApis, ...cachedApis];
+    } catch (error) {
+      captureExceptionAndLog(error);
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: error instanceof Error ? error.message : "Failed to fetch tools",
+      });
+    }
+  }),
 };
