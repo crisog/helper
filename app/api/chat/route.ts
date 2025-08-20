@@ -108,19 +108,23 @@ export const POST = withWidgetAuth(async ({ request }, { session, mailbox }) => 
     isHelperUser = true;
   }
 
-  // Cache tools if provided
+  // Cache tools if provided (fire-and-forget, don't block user request)
   if (tools && Object.keys(tools).length > 0) {
-    try {
-      await cacheTools({
-        tools,
-        customerSpecificTools: customerSpecificTools ?? false,
-        session,
-      });
-    } catch (error) {
+    cacheTools({
+      tools,
+      customerSpecificTools: customerSpecificTools ?? false,
+      session,
+    }).catch((error) => {
       captureExceptionAndLog(error, {
-        extra: { tools, customerSpecificTools, session },
+        extra: {
+          toolNames: Object.keys(tools),
+          toolCount: Object.keys(tools).length,
+          customerSpecificTools: customerSpecificTools ?? false,
+          isAnonymous: session.isAnonymous,
+          hasEmail: Boolean(session.email),
+        },
       });
-    }
+    });
   }
 
   return await respondWithAI({

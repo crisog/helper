@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { bigint, index, jsonb, pgTable, text, unique } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { bigint, index, jsonb, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core";
 import { withTimestamps } from "../lib/with-timestamps";
 import { platformCustomers } from "./platformCustomers";
 
@@ -17,24 +17,36 @@ export const cachedTools = pgTable(
   "cached_tools",
   {
     ...withTimestamps,
-    id: bigint({ mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
+    id: bigint("id", { mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
     toolName: text("tool_name").notNull(),
-    description: text(),
-    parameters: jsonb().default("{}").$type<CachedToolParameters>(),
+    description: text("description"),
+    parameters: jsonb("parameters").$type<CachedToolParameters>().default({}).notNull(),
     serverRequestUrl: text("server_request_url").notNull(),
     customerEmail: text("customer_email"),
-    platformCustomerId: bigint("platform_customer_id", { mode: "number" }),
+    platformCustomerId: bigint("platform_customer_id", { mode: "number" }).references(() => platformCustomers.id),
   },
-  (table) => [
+  (table) => ({
     // Index for efficient lookups
-    index("cached_tools_customer_email_idx").on(table.customerEmail),
-    index("cached_tools_platform_customer_id_idx").on(table.platformCustomerId),
-    index("cached_tools_tool_name_idx").on(table.toolName),
+    cached_tools_tool_name_idx: index("cached_tools_tool_name_idx").on(table.toolName),
 
-    // Unique constraint to ensure one tool per name per customer context
-    // This allows upsert logic (overwrite existing)
-    unique("cached_tools_unique_tool_customer").on(table.toolName, table.customerEmail, table.platformCustomerId),
-  ],
+    // Partial unique index for global tools (no customer context)
+    // Ensures only one global tool per tool name
+    cached_tools_unique_global_tool: uniqueIndex("cached_tools_unique_global_tool")
+      .on(table.toolName)
+      .where(sql`${table.customerEmail} IS NULL AND ${table.platformCustomerId} IS NULL`),
+    
+    // Partial unique index for customer-specific tools (by email)
+    // Ensures only one tool per name per customer email
+    cached_tools_unique_customer_email_tool: uniqueIndex("cached_tools_unique_customer_email_tool")
+      .on(table.toolName, table.customerEmail)
+      .where(sql`${table.customerEmail} IS NOT NULL`),
+    
+    // Partial unique index for customer-specific tools (by platform customer ID)
+    // Ensures only one tool per name per platform customer ID
+    cached_tools_unique_platform_customer_tool: uniqueIndex("cached_tools_unique_platform_customer_tool")
+      .on(table.toolName, table.platformCustomerId)
+      .where(sql`${table.platformCustomerId} IS NOT NULL`),
+  }),
 ).enableRLS();
 
 export const cachedToolsRelations = relations(cachedTools, ({ one }) => ({
